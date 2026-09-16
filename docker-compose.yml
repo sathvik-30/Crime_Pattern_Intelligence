@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: cpi_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: crime_pattern_intelligence
+      POSTGRES_USER: cpi_user
+      POSTGRES_PASSWORD: cpi_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - cpi_pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/migrations:ro
+
+volumes:
+  cpi_pgdata:
