@@ -2,9 +2,10 @@
 """
 Synthetic seed data generator for the Crime Pattern Intelligence System.
 
-Populates all 10 tables from the Phase 1 schema with realistic, internally
-consistent synthetic data for a fictional city, including deliberately
-baked-in patterns for later analytics phases to discover:
+Populates all 10 tables from the Phase 1 schema, plus the Phase 3
+case_reassignments table, with realistic, internally consistent synthetic
+data for a fictional city, including deliberately baked-in patterns for
+later analytics phases to discover:
 
   * a rising trend of reports in one hotspot area over the last 3 months
   * one crime type with strong seasonality (repeats every year in the window)
@@ -56,6 +57,11 @@ STAR_OFFICER_COUNT = 2                # officers with an outlier resolution rate
 STAR_OFFICER_CASE_SHARE = 0.20        # chance a case is steered to a star officer
 STAR_OFFICER_RESOLUTION_RATE = 0.93
 BASE_OFFICER_RESOLUTION_RATE = 0.65
+
+REASSIGNMENT_CASE_SHARE = 0.15   # fraction of cases that have escalation history
+REASSIGNMENT_REASONS = [
+    "Escalation", "Workload Rebalance", "Officer Transfer", "Specialist Handoff",
+]
 
 DB_CONFIG = {
     "host": os.environ.get("CPI_DB_HOST", "localhost"),
@@ -219,8 +225,9 @@ def random_datetime_in(d: date):
 # ---------------------------------------------------------------------------
 
 TABLES_IN_TRUNCATE_ORDER = [
-    "court_status", "evidence", "case_victims", "case_criminals", "cases",
-    "crime_reports", "victims", "criminals", "officers", "police_stations",
+    "crime_reports_audit", "case_reassignments", "court_status", "evidence",
+    "case_victims", "case_criminals", "cases", "crime_reports", "victims",
+    "criminals", "officers", "police_stations",
 ]
 
 
@@ -231,6 +238,27 @@ def connect():
 def truncate_all(cur):
     tables = ", ".join(TABLES_IN_TRUNCATE_ORDER)
     cur.execute(f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE;")
+
+
+def set_crime_reports_triggers(cur, enabled: bool):
+    """Seeding performs its own internal UPDATE on crime_reports (to fix up
+    status once a case's outcome is known), which is bulk/administrative
+    activity, not a real audit-worthy application change. Disabling
+    user triggers for the duration of the seed run -- a standard pattern
+    for bulk loaders -- keeps db/sql_features/triggers.sql's audit trigger
+    (if it has already been applied) from being populated by the seed
+    process itself, so crime_reports_audit only ever reflects genuine
+    post-seed activity.
+
+    Uses TRIGGER USER (not ALL): ALL would also disable the internal
+    triggers Postgres uses to enforce this table's foreign keys, which
+    must stay active even during seeding. USER only affects triggers
+    like the audit trigger, and is a no-op if none exist yet (e.g. on a
+    fresh database where triggers.sql hasn't been applied).
+    """
+    cur.execute(
+        "ALTER TABLE crime_reports %s TRIGGER USER;" % ("ENABLE" if enabled else "DISABLE")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +594,54 @@ def seed_evidence_and_court(cur, cases, officers_by_station):
             )
 
 
+def seed_case_reassignments(cur, cases, officers_by_station, officer_ids):
+    """Gives ~15% of cases a multi-step escalation/reassignment history for
+    the recursive CTE demo (db/sql_features/ctes.sql).
+
+    The chain is built backwards from the officer already recorded on the
+    case (cases.assigned_officer_id, set in seed_cases()) so that column
+    never needs to change here -- the last step in every chain simply
+    reproduces the case's current officer, and earlier steps invent
+    plausible prior officers who held it before. This keeps the resolution-
+    rate pattern already verified in Phase 2 (which is keyed off
+    assigned_officer_id) completely unaffected by adding this history.
+    """
+    reassigned_cases = random.sample(cases, int(len(cases) * REASSIGNMENT_CASE_SHARE))
+
+    for c in reassigned_cases:
+        final_officer = c["assigned_officer_id"]
+        station_officers = officers_by_station[c["station_id"]]
+
+        num_steps = random.choices([2, 3, 4], weights=[60, 30, 10], k=1)[0]
+        prior_pool = [o for o in station_officers if o != final_officer]
+        if len(prior_pool) < num_steps - 1:
+            prior_pool = [o for o in officer_ids if o != final_officer]
+        prior_officers = random.sample(prior_pool, min(num_steps - 1, len(prior_pool)))
+        chain_officers = prior_officers + [final_officer]
+
+        end = c["closed_date"] or TODAY
+        span_days = max(len(chain_officers), (end - c["opened_date"]).days)
+        step_offsets = sorted(
+            random.sample(range(span_days), len(chain_officers))
+            if span_days >= len(chain_officers)
+            else range(len(chain_officers))
+        )
+
+        previous_reassignment_id = None
+        for i, officer_id in enumerate(chain_officers):
+            reassigned_at = random_datetime_in(c["opened_date"] + timedelta(days=step_offsets[i]))
+            reason = "Initial Assignment" if i == 0 else random.choice(REASSIGNMENT_REASONS)
+            cur.execute(
+                """
+                INSERT INTO case_reassignments
+                    (case_id, previous_reassignment_id, officer_id, reassigned_at, reason)
+                VALUES (%s, %s, %s, %s, %s) RETURNING case_reassignment_id
+                """,
+                (c["case_id"], previous_reassignment_id, officer_id, reassigned_at, reason),
+            )
+            previous_reassignment_id = cur.fetchone()[0]
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -577,6 +653,7 @@ def main():
 
         print("Truncating existing data...")
         truncate_all(cur)
+        set_crime_reports_triggers(cur, enabled=False)
 
         print(f"Seeding {NUM_STATIONS} police stations...")
         station_ids = seed_police_stations(cur)
@@ -603,6 +680,10 @@ def main():
         print("Seeding evidence and court outcomes for resolved cases...")
         seed_evidence_and_court(cur, cases, officers_by_station)
 
+        print("Seeding case reassignment history...")
+        seed_case_reassignments(cur, cases, officers_by_station, officer_ids)
+
+        set_crime_reports_triggers(cur, enabled=True)
         conn.commit()
         print("Done. Committed.")
     except Exception:
