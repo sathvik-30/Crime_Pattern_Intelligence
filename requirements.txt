@@ -1,0 +1,15 @@
+# Dependencies for /analytics (Phase 4) and, from Phase 5 onward, /dashboard.
+#
+# db/seed/generate_seed_data.py (Phase 2) has its own much smaller
+# dependency set (faker, pg8000) and is intentionally not listed here --
+# see the "Environments" section of README.md for why.
+
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+python-dotenv>=1.0
+pandas>=2.2
+numpy>=1.26
+scikit-learn>=1.4
+statsmodels>=0.14
+plotly>=5.24
+folium>=0.17
