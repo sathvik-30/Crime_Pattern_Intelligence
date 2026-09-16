@@ -44,3 +44,52 @@ def get_engine() -> Engine:
 def ensure_output_dir() -> Path:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     return OUTPUT_DIR
+
+
+def crime_report_filters(date_from=None, date_to=None, crime_types=None, areas=None, date_column="date_occurred"):
+    """Builds a parameterized SQL WHERE fragment + params dict for the
+    common "filter crime_reports by date range / crime type / area"
+    pattern shared by several analytics loaders and the Phase 5
+    dashboard.
+
+    WHY build this once here instead of in each caller: every filterable
+    page in the dashboard (Overview, Geographic) needs the exact same
+    three optional conditions applied to a query that already has its own
+    WHERE clause (e.g. "location_lat IS NOT NULL") -- duplicating the
+    None-check-then-append logic in each loader function would be a
+    prime spot for one of them to drift out of sync with the others.
+
+    Returns (clause, params): clause is "" if no filters are set, or
+    " AND cond1 AND cond2 ..." (leading " AND ", ready to append after
+    an existing WHERE ... condition) otherwise. Every condition uses a
+    bound parameter (never raw string interpolation), even though these
+    values come from Streamlit widgets and this app has no untrusted
+    external input today -- building the habit of parameterizing is what
+    keeps it safe if that ever changes.
+
+    date_to's upper bound uses "< date_to + 1 day" rather than
+    "<= date_to": date_column is a TIMESTAMP, but date_to (from a
+    st.date_input) is a plain DATE. Comparing a timestamp <= a date casts
+    the date to midnight of that day, which silently excludes every
+    report on the end date itself except ones logged at exactly
+    00:00:00 -- an easy-to-miss off-by-almost-a-day bug that would make
+    "the full seeded date range" quietly drop the whole last day.
+    """
+    conditions = []
+    params = {}
+
+    if date_from is not None:
+        conditions.append(f"{date_column} >= %(date_from)s")
+        params["date_from"] = date_from
+    if date_to is not None:
+        conditions.append(f"{date_column} < %(date_to)s::date + INTERVAL '1 day'")
+        params["date_to"] = date_to
+    if crime_types:
+        conditions.append("crime_type = ANY(%(crime_types)s)")
+        params["crime_types"] = list(crime_types)
+    if areas:
+        conditions.append("area = ANY(%(areas)s)")
+        params["areas"] = list(areas)
+
+    clause = "".join(f" AND {c}" for c in conditions)
+    return clause, params

@@ -16,27 +16,37 @@ import pandas as pd
 from folium.plugins import HeatMap
 
 try:
-    from analytics.db import ensure_output_dir, get_engine
+    from analytics.db import crime_report_filters, ensure_output_dir, get_engine
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from db import ensure_output_dir, get_engine
+    from db import crime_report_filters, ensure_output_dir, get_engine
 
 # Fictional city center from db/seed/generate_seed_data.py's CITY_CENTER,
 # used only to center/zoom the map -- not a query filter.
 CITY_CENTER = (41.4500, -87.6200)
 
 
-def load_crime_locations(engine) -> pd.DataFrame:
+def load_crime_locations(
+    engine, date_from=None, date_to=None, crime_types=None, areas=None
+) -> pd.DataFrame:
     """One row per geocoded crime report. Rows with a NULL lat/lng
     (schema allows it -- see migration 005) are excluded since they
-    can't be plotted."""
-    query = """
+    can't be plotted.
+
+    date_from/date_to/crime_types/areas are optional filters (see
+    db.crime_report_filters) -- the Phase 5 dashboard's Geographic page
+    passes real widget values here so filtering happens in the SQL query
+    itself, not by loading everything and slicing the DataFrame after.
+    """
+    extra_clause, params = crime_report_filters(date_from, date_to, crime_types, areas)
+    query = f"""
         SELECT report_id, crime_type, area, severity, date_occurred,
                location_lat, location_lng
         FROM crime_reports
         WHERE location_lat IS NOT NULL AND location_lng IS NOT NULL
+        {extra_clause}
     """
-    return pd.read_sql(query, engine)
+    return pd.read_sql(query, engine, params=params)
 
 
 def build_heatmap(df: pd.DataFrame, center=CITY_CENTER) -> folium.Map:

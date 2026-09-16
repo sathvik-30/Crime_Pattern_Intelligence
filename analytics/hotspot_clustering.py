@@ -17,10 +17,10 @@ import pandas as pd
 from sklearn.cluster import DBSCAN
 
 try:
-    from analytics.db import ensure_output_dir, get_engine
+    from analytics.db import crime_report_filters, ensure_output_dir, get_engine
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from db import ensure_output_dir, get_engine
+    from db import crime_report_filters, ensure_output_dir, get_engine
 
 # Tuned empirically against the seeded dataset (see the eps/min_samples
 # grid search this module's docstring below references): eps=0.012 (the
@@ -37,13 +37,18 @@ DEFAULT_EPS = 0.005
 DEFAULT_MIN_SAMPLES = 8
 
 
-def load_locations(engine) -> pd.DataFrame:
-    query = """
+def load_locations(engine, date_from=None, date_to=None, crime_types=None, areas=None) -> pd.DataFrame:
+    """date_from/date_to/crime_types/areas let the Phase 5 dashboard's
+    Geographic page re-run DBSCAN over just the filtered subset the user
+    selected, rather than always clustering the whole table."""
+    extra_clause, params = crime_report_filters(date_from, date_to, crime_types, areas)
+    query = f"""
         SELECT report_id, area, crime_type, severity, location_lat, location_lng
         FROM crime_reports
         WHERE location_lat IS NOT NULL AND location_lng IS NOT NULL
+        {extra_clause}
     """
-    return pd.read_sql(query, engine)
+    return pd.read_sql(query, engine, params=params)
 
 
 def find_hotspots(

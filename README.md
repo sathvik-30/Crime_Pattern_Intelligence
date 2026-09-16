@@ -10,7 +10,7 @@ phases:
    stored procedures, an indexing case study
 4. **Python analytics layer** — heatmap, time-series/forecasting, DBSCAN
    hotspot clustering, patrol resource allocation
-5. Dashboard (Streamlit)
+5. **Streamlit dashboard** — 5-page multipage app over the SQL/analytics layers
 6. TBD
 
 ## Phase 1: Database Schema
@@ -22,10 +22,10 @@ db/migrations/    Versioned SQL migrations (run in numeric order)
 db/seed/          Synthetic data generator (Phase 2)
 db/sql_features/  Views, window functions, CTEs, triggers, procedures (Phase 3)
 analytics/        Python analytics modules (Phase 4)
-dashboard/        Reserved for the Phase 5 dashboard app
+dashboard/        5-page Streamlit multipage app (Phase 5)
 docs/             Design notes / write-ups (indexing case study, etc.)
 docker-compose.yml PostgreSQL 15 for local development
-requirements.txt  Dependencies for analytics/ and (from Phase 5) dashboard/
+requirements.txt  Dependencies for analytics/ and dashboard/
 ```
 
 ### Entity-relationship diagram
@@ -221,8 +221,70 @@ of `psycopg2-binary`, for the identical reason.
 
 - `db/seed/generate_seed_data.py` only needs `faker` + `pg8000` (both
   pure Python) and runs fine under that MSYS2 Python.
-- Everything under `/analytics` (and, from Phase 5, `/dashboard`) needs
-  the full scientific-Python stack and `requirements.txt` here targets a
-  standard CPython build (e.g. python.org, Anaconda) with normal
-  `win_amd64` wheel support — use a venv built from one of those for this
-  part of the project.
+- Everything under `/analytics` and `/dashboard` needs the full
+  scientific-Python stack and `requirements.txt` here targets a standard
+  CPython build (e.g. python.org, Anaconda) with normal `win_amd64` wheel
+  support — use a venv built from one of those for this part of the
+  project.
+
+## Phase 5: Streamlit Dashboard
+
+A 5-page multipage app under `/dashboard`, built directly on the Phase 3
+SQL layer and Phase 4 analytics modules rather than reimplementing their
+queries:
+
+1. **Overview** (`dashboard/app.py`) — KPI cards (total cases, resolution
+   rate, active cases, avg. time-to-resolution) and a crime trend chart
+2. **Geographic** (`pages/2_Geographic.py`) — the heatmap from
+   `analytics/heatmap.py` with the DBSCAN cluster overlay from
+   `analytics/hotspot_clustering.py`, filterable by date range/crime
+   type/area
+3. **Officer Performance** (`pages/3_Officer_Performance.py`) — the
+   `vw_officer_workload` view and the `RANK() OVER (...)` monthly
+   resolution ranking from `db/sql_features/window_functions.sql`
+4. **Case Resolution** (`pages/4_Case_Resolution.py`) — a funnel from
+   reported → under investigation → reached court → final verdict
+5. **Predictive** (`pages/5_Predictive.py`) — the forecast chart from
+   `analytics/time_series.py` and the patrol allocation table from
+   `analytics/resource_allocation.py`
+
+### Running it
+
+```bash
+pip install -r requirements.txt   # same venv as Phase 4 -- see Environments above
+streamlit run dashboard/app.py
+```
+
+### Design notes
+
+- **Caching**: `dashboard/common.py` wraps the SQLAlchemy engine in
+  `st.cache_resource` (one connection resource per session) and every
+  query-loading function uses `st.cache_data` (cached return values,
+  keyed on the actual filter arguments) with a leading-underscore
+  `_engine` parameter — Streamlit's documented convention for excluding
+  an argument from the cache key when it isn't itself meaningfully
+  hashable data.
+- **Filters reach the SQL, not just the display**: every analytics loader
+  from Phase 4 that a filterable page uses (`load_crime_locations`,
+  `load_locations`, `load_monthly_counts`) was extended with optional
+  `date_from`/`date_to`/`crime_types`/`areas` keyword arguments (default
+  `None`, so their Phase 4 standalone behavior is unchanged) built via a
+  new shared `analytics/db.crime_report_filters()` helper, so a filter
+  narrows the WHERE clause of the underlying query instead of slicing an
+  already-fetched DataFrame.
+- **A real bug this caught**: `crime_report_filters()` originally compared
+  the TIMESTAMP `date_occurred` column with `<= date_to`, where `date_to`
+  is a plain DATE from `st.date_input`. Postgres casts the DATE to
+  midnight for that comparison, which silently excluded almost every
+  report on the end date itself. Fixed by comparing
+  `< date_to + INTERVAL '1 day'` instead — caught by testing the Overview
+  page's "Total Cases" KPI against the known seeded total (508) and
+  finding it undercounting.
+- **Every page is independently importable**, not just runnable through
+  `app.py`: each page file (including `app.py`) searches upward from its
+  own location for the directory containing `common.py` and adds it to
+  `sys.path` before importing, rather than relying on Python having
+  already cached the `common` module from a previous page's import in
+  the same process — verified by running each page through
+  `streamlit.testing.v1.AppTest` in its own fresh process, not just
+  sequentially in one.

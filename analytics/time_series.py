@@ -20,20 +20,30 @@ from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 try:
-    from analytics.db import ensure_output_dir, get_engine
+    from analytics.db import crime_report_filters, ensure_output_dir, get_engine
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from db import ensure_output_dir, get_engine
+    from db import crime_report_filters, ensure_output_dir, get_engine
 
 
-def load_monthly_counts(engine) -> pd.DataFrame:
-    query = """
+def load_monthly_counts(engine, crime_types=None, areas=None) -> pd.DataFrame:
+    """crime_types/areas are optional filters for the Overview page's
+    trend chart. Deliberately no date_from/date_to here: the seasonal
+    decomposition and forecast in this module need the full, contiguous
+    24-month history to work at all (see decompose_seasonal's and
+    forecast_next_month's docstrings) -- a date-range-filtered series
+    would silently break both, so only the dimension filters that keep
+    every month present are exposed at this layer.
+    """
+    extra_clause, params = crime_report_filters(crime_types=crime_types, areas=areas)
+    query = f"""
         SELECT DATE_TRUNC('month', date_occurred)::date AS month, COUNT(*) AS crime_count
         FROM crime_reports
+        WHERE TRUE {extra_clause}
         GROUP BY DATE_TRUNC('month', date_occurred)::date
         ORDER BY month
     """
-    df = pd.read_sql(query, engine, parse_dates=["month"])
+    df = pd.read_sql(query, engine, params=params, parse_dates=["month"])
     return df.set_index("month")
 
 
