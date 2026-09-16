@@ -1,17 +1,31 @@
-# Dependencies for /analytics (Phase 4) and, from Phase 5 onward, /dashboard.
+# Full project dependency set: db/seed, /analytics, and /dashboard.
 #
-# db/seed/generate_seed_data.py (Phase 2) has its own much smaller
-# dependency set (faker, pg8000) and is intentionally not listed here --
-# see the "Environments" section of README.md for why.
+# One venv, one install, is the recommended path for a fresh clone:
+#   python -m venv .venv && source .venv/bin/activate  (or .venv\Scripts\activate on Windows)
+#   pip install -r requirements.txt
+#
+# db/seed/generate_seed_data.py only actually needs Faker + pg8000 (both
+# pure Python, so they're safe even on an unusual Python build); the rest
+# is for /analytics and /dashboard. Versions are pinned to what this
+# project was built and tested against -- see README.md's "Environments"
+# section if pip tries to compile numpy/pandas/scikit-learn from source
+# instead of installing a prebuilt wheel (a sign of a non-standard Python
+# build, e.g. MSYS2/MinGW, that these packages don't publish wheels for).
 
-SQLAlchemy>=2.0
-psycopg2-binary>=2.9
-python-dotenv>=1.0
-pandas>=2.2
-numpy>=1.26
-scikit-learn>=1.4
-statsmodels>=0.14
-plotly>=5.24
-folium>=0.17
-streamlit>=1.36
-streamlit-folium>=0.22
+Faker==40.39.0
+pg8000==1.31.5
+
+SQLAlchemy==2.0.54
+psycopg2-binary==2.9.13
+python-dotenv==1.2.3
+
+pandas==3.0.5
+numpy==2.5.3
+scikit-learn==1.9.1
+statsmodels==0.15.0
+
+plotly==7.1.0
+folium==0.20.0
+
+streamlit==1.64.0
+streamlit-folium==0.27.4
