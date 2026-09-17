@@ -238,6 +238,12 @@ This starts Postgres 15 on `localhost:5432` with database
 createdb crime_pattern_intelligence
 ```
 
+On Windows, the PostgreSQL installer doesn't always add `psql`/`createdb`/
+`dropdb` to `PATH`. If `createdb: command not found` (or similar), either
+add `<PostgreSQL install dir>\bin` (e.g.
+`C:\Program Files\PostgreSQL\18\bin`) to `PATH`, or call these tools by
+their full path for every `psql`/`createdb`/`dropdb` command below.
+
 ### 2. Configure environment variables
 
 ```bash
@@ -438,3 +444,9 @@ not just checked for syntax:
   its own fresh process) and a live `streamlit run` server returns
   HTTP 200 on every page route, with filters confirmed to actually
   change query results.
+- Re-verified end-to-end from a truly clean clone (Docker unavailable, so
+  via Option B): `db/seed/generate_seed_data.py` previously ignored
+  `.env` entirely (it read `os.environ` directly with no `load_dotenv()`
+  call, unlike `analytics/db.py`), so it silently connected with the
+  Docker-default credentials no matter what `.env` said — now fixed to
+  load `.env` the same way `analytics/db.py` does.

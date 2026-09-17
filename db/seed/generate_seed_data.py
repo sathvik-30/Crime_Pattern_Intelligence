@@ -31,9 +31,16 @@ Connection is configured via environment variables (all optional):
 import os
 import random
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import pg8000.dbapi
+from dotenv import load_dotenv
 from faker import Faker
+
+# Resolve .env relative to the project root (two levels up from this file),
+# not the current working directory, so `python db/seed/generate_seed_data.py`
+# finds it regardless of where it's invoked from -- matches analytics/db.py.
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 # ---------------------------------------------------------------------------
 # Configuration
